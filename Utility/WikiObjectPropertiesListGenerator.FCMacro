@@ -31,6 +31,7 @@ Usage:
         - All Properties - prints absolutely all properties of selected object.
         - Inherits+Unique Properties - prints only unique properties with included inherits report.
         - Only Unique Properties - prints only unique properties.
+    - Also select if you want to include the status and if you need the translated strings.
 
 - How to use again:
     - To quickly run this macro again, you can use keyboard shortcut `Shift+Ctrl+1` it will launch the last run macro.
@@ -38,15 +39,15 @@ Usage:
 
 __Name__ = "Wiki Object Properties List Generator"
 __Comment__ = "Generates lists of object properties for use in the FreeCAD Wiki documentation."
-__Author__ = "Evgeniy"
-__Date__ = "2024-11-23"
-__Version__ = "0.16.1"
+__Author__ = "Evgeniy, hasecilu"
+__Date__ = "2025-01-22"
+__Version__ = "0.17.0"
 __License__ = "LGPL-3.0-or-later"  # 6 matches for LGPL on https://spdx.org/licenses/
 __Web__ = ""
 __Wiki__ = "https://wiki.freecad.org/Macro_Wiki_Object_Properties_List_Generator"
 __Icon__ = "./WikiObjectPropertiesListGenerator.svg"
 __Xpm__ = ""
-__Help__ = "Select a scripted objects on the tree and execute the macro."
+__Help__ = "Select a scripted object on the tree and execute the macro."
 __Status__ = "Beta"
 __Requires__ = ""
 __Communication__ = "https://forum.freecad.org/viewtopic.php?f=21&t=61998"
@@ -54,6 +55,8 @@ __Files__ = "./WikiObjectPropertiesListGenerator.svg"
 
 # NOTE: Changelog
 # ---------
+# - 0.17.0 - 2024-01-23
+#   - Add option to print translated strings
 # - 0.16.1 - 2024-11-23
 #   - Attend change requests: imports, use semver, f-string, simplify condition, function style.
 #   - Add checkbox to let user decide if wants to clear or not the Report View
@@ -70,6 +73,31 @@ from dataclasses import dataclass
 import FreeCAD as app
 import FreeCADGui as gui
 from PySide import QtCore, QtGui, QtWidgets  # FreeCAD's PySide!
+
+translate = app.Qt.translate
+
+lang = app.Gui.getLocale()
+supp_l = gui.supportedLocales()
+locale = supp_l[lang]
+
+translations = {
+    "Properties": {
+        "es": "Propiedades",
+        "de": "Eigenschaften",
+        "fr": "Propriétés",
+        "it": "Proprietà",
+    },
+    "View": {"es": "Vista", "de": "Ansicht", "fr": "Vue", "it": "Vista"},
+    "Data": {"es": "Datos", "de": "Daten", "fr": "Données", "it": "Dati"},
+    "Default is": {"es": "Por defecto", "de": "", "fr": "par défaut", "it": ""},
+}
+
+
+# Function to get the translated term
+def _tr(term: str, locale: str):
+    if locale in ["es-AR", "es-ES"]:
+        locale = "es"
+    return translations.get(term, {}).get(locale, term)
 
 
 @dataclass
@@ -124,9 +152,14 @@ def print_sr(text: str, show_report: bool = True):
     app.Console.PrintMessage(text) if show_report else None
 
 
-def generate_markup_list(grouped_properties: dict, print_status: bool = False):
+def generate_markup_list(
+    grouped_properties: dict,
+    print_status: bool = False,
+    use_translated_strings: bool = False,
+):
     """Print to the console the Wiki markup code."""
-    # NOTE: Group example:
+    # NOTE:
+    # Group example:
     # {{Properties_Title|Box features}}
     # Property example:
     # * {{PropertyData|BoxOpenFront|Bool}}: Default is {{value|False}}. Leave front of box open
@@ -135,7 +168,8 @@ def generate_markup_list(grouped_properties: dict, print_status: bool = False):
 
     # Sort groups and properties within each group
     for group in sorted(grouped_properties):
-        app.Console.PrintMessage(f"\n{{{{Properties_Title|{group}}}}}\n\n")
+        title = translate("App::Property", group) if use_translated_strings else group
+        app.Console.PrintMessage(f"\n{{{{Properties_Title|{title}}}}}\n\n")
         for prop, data in sorted(grouped_properties[group]):
             if print_status:
                 status = "|" + data.status
@@ -143,15 +177,28 @@ def generate_markup_list(grouped_properties: dict, print_status: bool = False):
                 status = "|" + "hidden"  # manually use lowercase
             else:
                 status = ""
-            app.Console.PrintMessage(
-                f"* {{{{Property{data.property_type}|{prop}|{data.data_type}{status}}}}}: "
-                f"Default is {{{{value|{data.default_value}}}}}. {data.tooltip}.\n"
-            )
+            if use_translated_strings:
+                app.Console.PrintMessage(
+                    f"* {{{{Property{data.property_type}|{translate('App::Property', prop)}|"
+                    f"{data.data_type}{status}}}}}: "
+                    f"{_tr('Default is', locale)} {{{{value|{data.default_value}}}}}. "
+                    f"{translate('App::Property', data.tooltip)}.\n"
+                )
+            else:
+                app.Console.PrintMessage(
+                    f"* {{{{Property{data.property_type}|{prop}|{data.data_type}{status}}}}}: "
+                    f"Default is {{{{value|{data.default_value}}}}}. {data.tooltip}.\n"
+                )
     app.Console.PrintMessage("\n\n")
 
 
 def print_obj_properties(
-    obj, typ: str, ignore_list: dict, show_inherits: bool = False, print_status: bool = False
+    obj,
+    typ: str,
+    ignore_list: dict,
+    show_inherits: bool = False,
+    print_status: bool = False,
+    use_translated_strings: bool = False,
 ):
     """Print non-ignored properties of the selected object to the Report View."""
     grouped_properties = {}
@@ -202,7 +249,7 @@ def print_obj_properties(
         # angle brackets is masked as \x3C and \x3E so this code can be published in the Wiki
         print(f"\n\x3c!--\n{inherits}--\x3e")
 
-    generate_markup_list(grouped_properties, print_status)
+    generate_markup_list(grouped_properties, print_status, use_translated_strings)
 
 
 def add_properties_to_ignore_list(
@@ -326,6 +373,14 @@ class CustomDialog(QtWidgets.QDialog):
         layout.addWidget(self.include_prop_status)
         self.clear_report_view = QtWidgets.QCheckBox("Clear all content on Report View", self)
         layout.addWidget(self.clear_report_view)
+        self.use_translated_strings = QtWidgets.QCheckBox(
+            "Print translated versions of the strings", self
+        )
+        self.use_translated_strings.setToolTip(
+            "The language currently set on FreeCAD settings is used.\n"
+            "Translations appear if they were already translated."
+        )
+        layout.addWidget(self.use_translated_strings)
 
         # Buttons
         button_om = QtWidgets.QPushButton(self.button_strings[0], self)
@@ -375,16 +430,17 @@ def show_dialog():
             view_ignore_list = {}
             if dialog.pressed_button in dialog.button_strings[2:4]:  # 2,3
                 data_ignore_list, view_ignore_list = fill_ignore_lists(False)
-            print("\n== Properties ==")
-            print("\n=== View ===")
+            print(f"\n== {_tr('Properties', locale)} ==")
+            print(f"\n=== {_tr('View', locale)} ===")
             print_obj_properties(
                 act_obj,
                 "View",
                 view_ignore_list,
                 dialog.pressed_button == dialog.button_strings[3],
                 dialog.include_prop_status.isChecked(),
+                dialog.use_translated_strings.isChecked(),
             )
-            print("\n=== Data ===")
+            print(f"\n=== {_tr('Data', locale)} ===")
             act_obj = app.activeDocument().getObject(name)
             print_obj_properties(
                 act_obj,
@@ -392,6 +448,7 @@ def show_dialog():
                 data_ignore_list,
                 dialog.pressed_button == dialog.button_strings[3],
                 dialog.include_prop_status.isChecked(),
+                dialog.use_translated_strings.isChecked(),
             )
     else:
         print("Dialog canceled")
